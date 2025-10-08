@@ -24,6 +24,9 @@ import (
 const (
 	statefulSetDB     = "tekton-results-postgres"
 	servicePostgresDB = "tekton-results-postgres-service"
+	watcherDeployment = "tekton-results-watcher"
+	watcherService    = "tekton-results-watcher"
+	watcherConfigMap  = "tekton-results-config-leader-election"
 )
 
 func filterExternalDB(tr *v1alpha1.TektonResult, manifest *mf.Manifest) {
@@ -32,4 +35,26 @@ func filterExternalDB(tr *v1alpha1.TektonResult, manifest *mf.Manifest) {
 		*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("ConfigMap"), mf.ByName(configPostgresDB))))
 		*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("Service"), mf.ByName(servicePostgresDB))))
 	}
+}
+
+// filterWatcherAndRetentionPolicy filters out watcher deployment and retention policy components
+// This allows deploying only the Results API server without the watcher and retention policy agent
+func filterWatcherAndRetentionPolicy(manifest *mf.Manifest) {
+	// Remove watcher deployment
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("Deployment"), mf.ByName(watcherDeployment))))
+
+	// Remove watcher service
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("Service"), mf.ByName(watcherService))))
+
+	// Remove watcher-related ConfigMaps (leader election config is used by watcher)
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("ConfigMap"), mf.ByName(watcherConfigMap))))
+
+	// Remove watcher ServiceAccount if it exists as a separate resource
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("ServiceAccount"), mf.ByName(watcherDeployment))))
+
+	// Remove watcher-specific RBAC resources
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("ClusterRole"), mf.ByName(watcherDeployment))))
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("ClusterRoleBinding"), mf.ByName(watcherDeployment))))
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("Role"), mf.ByName(watcherDeployment))))
+	*manifest = manifest.Filter(mf.Not(mf.All(mf.ByKind("RoleBinding"), mf.ByName(watcherDeployment))))
 }

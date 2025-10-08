@@ -69,7 +69,8 @@ const (
 )
 
 var (
-	resultDeployementNames = []string{resultAPIDeployment, resultWatcherDeployment}
+	// Only include API deployment since watcher is filtered out
+	resultDeployementNames = []string{resultAPIDeployment}
 	// allowed property secret keys
 	allowedPropertySecretKeys = []string{
 		"S3_BUCKET_NAME",
@@ -97,10 +98,14 @@ func (r *Reconciler) transform(ctx context.Context, manifest *mf.Manifest, comp 
 
 	targetNs := comp.GetSpec().GetTargetNamespace()
 	filterExternalDB(instance, manifest)
+
+	// Filter out watcher and retention policy components - deploy only API server
+	filterWatcherAndRetentionPolicy(manifest)
 	extra := []mf.Transformer{
 		common.InjectOperandNameLabelOverwriteExisting(v1alpha1.OperandTektoncdResults),
 		common.ApplyProxySettings,
-		common.ReplaceNamespaceInDeploymentArgs([]string{resultWatcherDeployment}, targetNs),
+		// Skip watcher-specific namespace replacement since watcher is filtered out
+		// common.ReplaceNamespaceInDeploymentArgs([]string{resultWatcherDeployment}, targetNs),
 		common.ReplaceNamespaceInDeploymentEnv(resultDeployementNames, targetNs),
 		updateApiConfig(instance.Spec),
 		updateApiEnv(instance.Spec),
@@ -114,16 +119,21 @@ func (r *Reconciler) transform(ctx context.Context, manifest *mf.Manifest, comp 
 		common.DeploymentImages(resultImgs),
 		common.DeploymentEnvVarKubernetesMinVersion(),
 		common.StatefulSetImages(resultImgs),
-		common.AddConfigMapValues(tektonResultleaderElectionConfig, instance.Spec.Performance.PerformanceLeaderElectionConfig),
-		common.UpdatePerformanceFlagsInDeploymentAndLeaderConfigMap(&instance.Spec.Performance, tektonResultleaderElectionConfig, resultWatcherDeployment, resultWatcherContainer),
+		// Skip watcher-specific performance and leader election configs since watcher is filtered out
+		// common.AddConfigMapValues(tektonResultleaderElectionConfig, instance.Spec.Performance.PerformanceLeaderElectionConfig),
+		// common.UpdatePerformanceFlagsInDeploymentAndLeaderConfigMap(&instance.Spec.Performance, tektonResultleaderElectionConfig, resultWatcherDeployment, resultWatcherContainer),
+		// Remove retention policy agent container from API deployment
+		removeRetentionPolicyAgentContainer(),
 	}
 
-	if instance.Spec.Performance.StatefulsetOrdinals != nil && *instance.Spec.Performance.StatefulsetOrdinals {
-		extra = append(extra,
-			common.ConvertDeploymentToStatefulSet(tektonResultWatcherName, tektonResultWatcherServiceName),
-			common.AddStatefulEnvVars(tektonResultWatcherName, tektonResultWatcherServiceName, tektonResultWatcherStatefulServiceName, tektonResultWatcherStatefulControllerOrdinal),
-		)
-	}
+	// Skip StatefulSet conversion logic since watcher deployment is filtered out
+	// This was used to convert watcher deployment to statefulset for performance
+	// if instance.Spec.Performance.StatefulsetOrdinals != nil && *instance.Spec.Performance.StatefulsetOrdinals {
+	//	extra = append(extra,
+	//		common.ConvertDeploymentToStatefulSet(tektonResultWatcherName, tektonResultWatcherServiceName),
+	//		common.AddStatefulEnvVars(tektonResultWatcherName, tektonResultWatcherServiceName, tektonResultWatcherStatefulServiceName, tektonResultWatcherStatefulControllerOrdinal),
+	//	)
+	// }
 
 	extra = append(extra, r.extension.Transformers(instance)...)
 	err := common.Transform(ctx, manifest, instance, extra...)
@@ -137,6 +147,47 @@ func (r *Reconciler) transform(ctx context.Context, manifest *mf.Manifest, comp 
 		return err
 	}
 	return nil
+}
+
+// removeRetentionPolicyAgentContainer removes the retention policy agent container
+// from the API deployment if it exists
+func removeRetentionPolicyAgentContainer() mf.Transformer {
+	return func(u *unstructured.Unstructured) error {
+		if u.GetKind() != "Deployment" || u.GetName() != resultAPIDeployment {
+			return nil
+		}
+
+		dep := &appsv1.Deployment{}
+		err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(u.Object, dep)
+		if err != nil {
+			return err
+		}
+
+		// Filter out retention policy agent container from all containers
+		var filteredContainers []corev1.Container
+		for _, container := range dep.Spec.Template.Spec.Containers {
+			if container.Name != retentionPolicyAgentContainerName {
+				filteredContainers = append(filteredContainers, container)
+			}
+		}
+		dep.Spec.Template.Spec.Containers = filteredContainers
+
+		// Also filter out from init containers if present
+		var filteredInitContainers []corev1.Container
+		for _, container := range dep.Spec.Template.Spec.InitContainers {
+			if container.Name != retentionPolicyAgentContainerName {
+				filteredInitContainers = append(filteredInitContainers, container)
+			}
+		}
+		dep.Spec.Template.Spec.InitContainers = filteredInitContainers
+
+		unstrObj, err := k8sruntime.DefaultUnstructuredConverter.ToUnstructured(dep)
+		if err != nil {
+			return err
+		}
+		u.SetUnstructuredContent(unstrObj)
+		return nil
+	}
 }
 
 func enablePVCLogging(p v1alpha1.ResultsAPIProperties) mf.Transformer {
