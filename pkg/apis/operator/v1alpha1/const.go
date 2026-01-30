@@ -145,4 +145,6 @@ const (
 	PrunerResourceName           = "tektoncd-pruner"
 	TektonPrunerResourceName     = "pruner"
 	TektonSchedulerResourceName  = "scheduler"
+	SyncerServiceResourceName    = "syncer-service"
+	OperandSyncerService         = "syncer-service"
 )

@@ -28,6 +28,7 @@ const (
 	ControllerManualApprovalGate ControllerName = "manualapprovalgate"
 	ControllerTektonPruner       ControllerName = "tektonpruner"
 	ControllerTektonScheduler    ControllerName = "tektonscheduler"
+	ControllerSyncerService      ControllerName = "syncerservice"
 	EnvControllerNames           string         = "CONTROLLER_NAMES"
 	EnvSharedMainName            string         = "UNIQUE_PROCESS_NAME"
 )
